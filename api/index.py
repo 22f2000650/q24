@@ -3,16 +3,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import requests
 import json
-import os
 from datetime import datetime
-from typing import List, Optional
-import sqlite3
-from dotenv import load_dotenv
+from typing import List
 import re
-from api.index import app
-
-# Load environment variables
-load_dotenv()
 
 app = FastAPI(title="DataFlow AI Pipeline")
 
@@ -24,29 +17,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# Database setup
-def init_db():
-    """Initialize SQLite database (only works in local environment)"""
-    try:
-        conn = sqlite3.connect('/tmp/pipeline_data.db')
-        cursor = conn.cursor()
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS processed_items (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                original_text TEXT,
-                analysis TEXT,
-                sentiment TEXT,
-                timestamp TEXT,
-                source TEXT
-            )
-        ''')
-        conn.commit()
-        conn.close()
-    except Exception as e:
-        print(f"Database init failed (expected in serverless): {e}")
-
-
 
 # Request/Response Models
 class PipelineRequest(BaseModel):
@@ -73,7 +43,7 @@ def fetch_comments():
         url = "https://jsonplaceholder.typicode.com/comments?postId=1"
         response = requests.get(url, timeout=10)
         response.raise_for_status()
-        comments = response.json()[:3]  # Get first 3 comments
+        comments = response.json()[:3]
         return comments, None
     except requests.exceptions.Timeout:
         return None, "API request timed out"
@@ -81,9 +51,8 @@ def fetch_comments():
         return None, f"API error: {str(e)}"
 
 def analyze_with_ai(text: str):
-    """Step 2: AI-powered sentiment analysis and insights"""
+    """Step 2: AI-powered sentiment analysis"""
     try:
-        # Sentiment analysis using keyword detection
         text_lower = text.lower()
         
         # Positive indicators
@@ -96,11 +65,9 @@ def analyze_with_ai(text: str):
                          'disappointing', 'sad', 'angry', 'frustrated', 'issue',
                          'problem', 'error', 'wrong', 'horrible']
         
-        # Count sentiment indicators
         positive_count = sum(1 for word in positive_words if word in text_lower)
         negative_count = sum(1 for word in negative_words if word in text_lower)
         
-        # Determine sentiment
         if positive_count > negative_count:
             sentiment = "optimistic"
         elif negative_count > positive_count:
@@ -108,12 +75,10 @@ def analyze_with_ai(text: str):
         else:
             sentiment = "balanced"
         
-        # Generate insights based on text characteristics
         word_count = len(text.split())
         has_question = '?' in text
         is_long = word_count > 20
         
-        # Create analysis
         insights = []
         
         if is_long:
@@ -133,29 +98,22 @@ def analyze_with_ai(text: str):
         
         analysis = ". ".join(insights) + "."
         
-        return {
-            "analysis": analysis,
-            "sentiment": sentiment
-        }, None
+        return {"analysis": analysis, "sentiment": sentiment}, None
         
     except Exception as e:
         return None, f"AI analysis error: {str(e)}"
 
 def store_data(original: str, analysis: str, sentiment: str, source: str):
-    """Step 3: Store data (simulation for serverless environment)"""
+    """Step 3: Store data (simulated for serverless)"""
     try:
         timestamp = datetime.utcnow().isoformat() + "Z"
-        
-        # In serverless environment, we simulate storage
-        # In production, you would use a database like PostgreSQL, MongoDB, etc.
-        print(f"[STORAGE] Storing item: {original[:50]}... | Sentiment: {sentiment}")
-        
+        print(f"[STORAGE] Item stored: {original[:50]}... | Sentiment: {sentiment}")
         return True, timestamp, None
     except Exception as e:
         return False, None, f"Storage error: {str(e)}"
-    
+
 def send_notification(email: str, items_count: int):
-    """Step 4: Send notification (simulated via console log)"""
+    """Step 4: Send notification"""
     try:
         notification_message = f"""
 ========================================
@@ -163,7 +121,7 @@ NOTIFICATION SENT
 ========================================
 To: {email}
 Subject: Pipeline Processing Complete
-Message: Successfully processed {items_count} items through the DataFlow AI Pipeline
+Message: Successfully processed {items_count} items
 Time: {datetime.utcnow().isoformat()}Z
 ========================================
 """
@@ -175,34 +133,24 @@ Time: {datetime.utcnow().isoformat()}Z
 # Main API Endpoint
 @app.post("/pipeline", response_model=PipelineResponse)
 async def process_pipeline(request: PipelineRequest):
-    """
-    Main pipeline endpoint that:
-    1. Fetches data from JSONPlaceholder API
-    2. Enriches with AI analysis
-    3. Stores in database
-    4. Sends notification
-    """
+    """Main pipeline endpoint"""
     processed_items = []
     errors = []
     
-    # Step 1: Fetch comments from API
     comments, error = fetch_comments()
     if error:
         errors.append(f"API Fetch: {error}")
         raise HTTPException(status_code=500, detail=f"Failed to fetch data: {error}")
     
-    # Process each comment through the pipeline
     for idx, comment in enumerate(comments):
         try:
             original_text = f"{comment['name']} - {comment['body']}"
             
-            # Step 2: AI Analysis
             ai_result, error = analyze_with_ai(comment['body'])
             if error:
                 errors.append(f"Item {idx}: {error}")
                 continue
             
-            # Step 3: Store in database
             stored, timestamp, error = store_data(
                 original=original_text,
                 analysis=ai_result['analysis'],
@@ -215,7 +163,6 @@ async def process_pipeline(request: PipelineRequest):
                 stored = False
                 timestamp = datetime.utcnow().isoformat() + "Z"
             
-            # Add to processed items
             processed_items.append(ProcessedItem(
                 original=original_text,
                 analysis=ai_result['analysis'],
@@ -228,13 +175,11 @@ async def process_pipeline(request: PipelineRequest):
             errors.append(f"Item {idx}: Unexpected error - {str(e)}")
             continue
     
-    # Step 4: Send notification
     notification_sent, error = send_notification(request.email, len(processed_items))
     if error:
         errors.append(error)
         notification_sent = False
     
-    # Return response
     return PipelineResponse(
         items=processed_items,
         notificationSent=notification_sent,
@@ -244,7 +189,7 @@ async def process_pipeline(request: PipelineRequest):
 
 @app.get("/")
 async def root():
-    """Health check endpoint"""
+    """Health check"""
     return {
         "status": "running",
         "service": "DataFlow AI Pipeline",
@@ -255,16 +200,8 @@ async def root():
 
 @app.get("/health")
 async def health():
-    """Detailed health check"""
+    """Health check"""
     return {
         "status": "healthy",
-        "timestamp": datetime.utcnow().isoformat() + "Z",
-        "database": "connected"
+        "timestamp": datetime.utcnow().isoformat() + "Z"
     }
-    
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
-
-app = app
