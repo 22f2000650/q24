@@ -9,7 +9,7 @@ from typing import List, Optional
 import sqlite3
 from dotenv import load_dotenv
 import re
-from main import app
+from api.index import app
 
 # Load environment variables
 load_dotenv()
@@ -266,3 +266,5 @@ async def health():
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
+
+app = app
